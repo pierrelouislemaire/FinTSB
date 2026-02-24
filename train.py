@@ -35,7 +35,7 @@ def main(seed, config_file="configs/config_patchtst.yaml"):
     model = init_instance_by_config(config["task"]["model"])
 
     if model_type not in ['XGBoost', 'LightGBM']:
-        preds, metrics = model.fit(dataset)
+        preds, metrics = model.fit(dataset) 
     else:
         model.fit(dataset)
         preds = model.predict(dataset)
@@ -54,15 +54,16 @@ def main(seed, config_file="configs/config_patchtst.yaml"):
 
     per_df = preds.reset_index()
     per_df = per_df.sort_values(['datetime', 'instrument'])
-    per_df['group_id'] = per_df.groupby(['datetime', 'instrument']).cumcount()
-    assert (per_df.groupby(['datetime', 'instrument'])['group_id'].max() == 19).all(), "Error"
+    dates = per_df['datetime'].unique()
+    #per_df['group_id'] = per_df.groupby(['datetime']).cumcount()
+    #assert (per_df.groupby(['datetime', 'instrument'])['group_id'].max() == 19).all(), "Error"
 
     r_metrics = {'IC': [], 'ICIR': [], 'RankIC': [], 'RankICIR': []}
     r_df = []
 
     strategy_config = config['strategy_config']
-    for i in tqdm(range(20)):
-        sub_df = per_df[per_df['group_id'] == i]
+    for date in tqdm(np.array_split(dates, 20)):
+        sub_df = per_df[per_df['datetime'].isin(date)]
         sub_df = sub_df.set_index(['datetime', 'instrument'])
         sub_df = sub_df[['score', 'label']]
 
@@ -118,6 +119,6 @@ if __name__ == "__main__":
     # set params from cmd
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--seed", type=int, default=1000, help="random seed")
-    parser.add_argument("--config_file", type=str, default="configs/config_wftnet.yaml", help="config file")
+    parser.add_argument("--config_file", type=str, default="configs/config_lstm.yaml", help="config file")
     args = parser.parse_args()
     main(**vars(args))

@@ -9,7 +9,7 @@ import pandas as pd
 from qlib.data.dataset import DatasetH
 from qlib.data import D
 
-device = "cuda:1" if torch.cuda.is_available() else "cpu"
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 
 def _to_tensor(x):
@@ -95,6 +95,8 @@ class UnifiedTSDatasetH(DatasetH):
         account=1000000,
         **kwargs,
     ):
+        
+        self.segments = self._expand_segments(segments)
 
         assert horizon > 0, "please specify `horizon` to avoid data leakage"
 
@@ -133,7 +135,27 @@ class UnifiedTSDatasetH(DatasetH):
             },
         }
 
-        super().__init__(handler, segments, **kwargs)
+        super().__init__(handler, self.segments, **kwargs)
+        
+    def _expand_segments(self, segments):
+        """
+        Detects the start and end year from the YAML and 
+        breaks them into repeating yearly chunks.
+        """
+        # Get the global start and end from your YAML input
+        # e.g., using the 'train' range to find the total span
+        start_year = pd.Timestamp(segments['train'][0]).year
+        end_year = pd.Timestamp(segments['test'][1]).year
+        
+        expanded = {"train": [], "valid": [], "test": []}
+        
+        for year in range(start_year, end_year + 1):
+            # Apply your specific logic for every year
+            expanded["train"].append((f"{year}-01-01", f"{year}-08-31"))
+            expanded["valid"].append((f"{year}-09-01", f"{year}-10-14"))
+            expanded["test"].append((f"{year}-10-15", f"{year}-12-31"))
+            
+        return expanded
 
     def setup_data(self, handler_kwargs: dict = None, **kwargs):
 
@@ -144,7 +166,7 @@ class UnifiedTSDatasetH(DatasetH):
         df = self.handler._data
         # df.index = df.index.swaplevel()
         # df.sort_index(inplace=True)
-        fea = [col for col in df.columns if col not in ['label', 'source']]
+        fea = [col for col in df.columns if col not in ['raw_label', 'label', 'source']]
 
         unique_sources = df['source'].unique()
         df_ = pd.DataFrame()
@@ -160,6 +182,7 @@ class UnifiedTSDatasetH(DatasetH):
         self._data = df[fea].squeeze().astype("float32")
         self._source = df['source'].squeeze().astype("int32")
         self._label = df[['label']].squeeze().astype("float32")
+        self._raw_label = df[['raw_label']].squeeze().astype("float32")
         self._index = df.index
 
         # add memory to feature
@@ -172,6 +195,7 @@ class UnifiedTSDatasetH(DatasetH):
         if self.pin_memory:
             self._data = _to_tensor(self._data)
             self._label = _to_tensor(self._label)
+            self._raw_label = _to_tensor(self._raw_label)
             self.zeros = _to_tensor(self.zeros)
 
         # # create batch slices
@@ -180,20 +204,23 @@ class UnifiedTSDatasetH(DatasetH):
         unique_sources = np.unique(sources)
         self.batch_slices = []
         current_pos = 0
-
-        for source_id in unique_sources:
-
+        
+        while current_pos < len(sources):
+            
+            source_id = sources[current_pos]
             mask = (sources[current_pos:] == source_id)
+            
             if not np.any(mask):
                 break
             end_pos = current_pos + np.argmax(~mask) if not np.all(mask) else len(sources)
-
+            
             source_index = self._index[current_pos:end_pos]
             source_slices = _create_ts_slices(source_index, self.seq_len)
 
             for slc in source_slices:
                 global_slice = slice(slc.start + current_pos, slc.stop + current_pos)
                 self.batch_slices.append(global_slice)
+                
             current_pos = end_pos
 
         self.batch_slices = np.array(self.batch_slices)
@@ -208,31 +235,37 @@ class UnifiedTSDatasetH(DatasetH):
 
     def _prepare_seg(self, slc, **kwargs):
         fn = _get_date_parse_fn(self._index[0][1])
-
-        if isinstance(slc, slice):
-            start, stop = slc.start, slc.stop
-        elif isinstance(slc, (list, tuple)):
-            start, stop = slc
+        
+        # New Logic: Handle a list of (start, end) tuples
+        if isinstance(slc, list):
+            intervals = [(fn(s), fn(e)) for s, e in slc]
+        elif isinstance(slc, (slice, tuple)):
+            start, stop = (slc.start, slc.stop) if isinstance(slc, slice) else slc
+            intervals = [(fn(start), fn(stop))]
         else:
-            raise NotImplementedError(f"This type of input is not supported")
-        start_date = fn(start)
-        end_date = fn(stop)
-        obj = copy.copy(self)  # shallow copy
-        # NOTE: Seriable will disable copy `self._data` so we manually assign them here
+            raise NotImplementedError(f"Type {type(slc)} not supported")
+
+        obj = copy.copy(self)
         obj._data = self._data
         obj._label = self._label
+        obj._raw_label = self._raw_label
         obj._index = self._index
+        
+        # Filter slices that fall into ANY of the specified year intervals
         new_batch_slices = []
         for batch_slc in self.batch_slices:
             date = self._index[batch_slc.stop - 1][1]
-            if start_date <= date <= end_date:
+            if any(s <= date <= e for s, e in intervals):
                 new_batch_slices.append(batch_slc)
+        
         obj.batch_slices = np.array(new_batch_slices)
+        
         new_daily_slices = []
         for daily_slc in self.daily_slices:
             date = self._index[daily_slc[0].stop - 1][1]
-            if start_date <= date <= end_date:
+            if any(s <= date <= e for s, e in intervals):
                 new_daily_slices.append(daily_slc)
+                
         obj.daily_slices = new_daily_slices
         return obj
 
@@ -293,6 +326,7 @@ class UnifiedTSDatasetH(DatasetH):
             # collect data
             data = []
             label = []
+            raw_label = []
             index = []
             for slc in slices_subset:
                 _data = self._data[slc].clone() if self.pin_memory else self._data[slc].copy()
@@ -304,6 +338,7 @@ class UnifiedTSDatasetH(DatasetH):
                 _data[-self.horizon :, -1 :] = 0
                 data.append(_data)
                 label.append(self._label[slc.stop - 1])
+                raw_label.append(self._raw_label[slc.stop - 1])
                 index.append(slc.stop - 1)
 
 
@@ -312,9 +347,11 @@ class UnifiedTSDatasetH(DatasetH):
             if isinstance(data[0], torch.Tensor):
                 data = torch.stack(data)
                 label = torch.stack(label)
+                raw_label = torch.stack(raw_label)
             else:
                 data = _to_tensor(np.stack(data))
                 label = _to_tensor(np.stack(label))
+                raw_label = _to_tensor(np.stack(raw_label))
             # yield -> generator
 
-            yield {"data": data, "label": label, "index": index}
+            yield {"data": data, "label": label, "raw_label": raw_label, "index": index}

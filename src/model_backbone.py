@@ -41,11 +41,11 @@ from src.models.GAT import GAT
 from src.models.GCN import GCN
 from src.models.TimeBridge import TimeBridge
 
-device = "cuda:1" if torch.cuda.is_available() else "cpu"
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 
 class RankMSELoss(nn.Module):
-    def __init__(self, rank_weight=3.0, mse_weight=1.0):
+    def __init__(self, rank_weight=5.0, mse_weight=1.0):
         super(RankMSELoss, self).__init__()
         self.rank_weight = rank_weight
         self.mse_weight = mse_weight
@@ -58,8 +58,9 @@ class RankMSELoss(nn.Module):
     
         rank_loss = F.relu(- (pred_diff * label_diff))
         
-        rank_loss = rank_loss.sum(dim=[1])
-        rank_loss = rank_loss.mean()
+        #rank_loss = rank_loss.sum(dim=[1])
+        #rank_loss = rank_loss.mean()
+        rank_loss = rank_loss.sum()
 
         combined_loss = self.rank_weight * rank_loss + self.mse_weight * mse_loss
         
@@ -183,7 +184,7 @@ class QniverseModel(Model):
         metrics = []
         total_inference_time = 0.0
         for batch in tqdm(data_set):
-            data, label, index = batch["data"], batch["label"], batch["index"]
+            data, label, raw_label, index = batch["data"], batch["label"], batch["raw_label"], batch["index"]
 
             feature = data[:, :, : -1]
 
@@ -199,7 +200,7 @@ class QniverseModel(Model):
 
             X = np.c_[
                 pred.cpu().numpy(),
-                label.cpu().numpy(),
+                raw_label.cpu().numpy(),
             ]
             columns = ["score", "label"]
 
@@ -259,7 +260,7 @@ class QniverseModel(Model):
             params_list["model"].append(copy.deepcopy(self.model.state_dict()))
             self.model.load_state_dict(average_params(params_list["model"]))
 
-            valid_metrics = self.test_epoch(valid_set)[0]
+            valid_metrics, valid_preds = self.test_epoch(valid_set, return_pred=True)
             evals_result["valid"].append(valid_metrics)
             self.logger.info("\tvalid metrics: %s" % valid_metrics)
 
