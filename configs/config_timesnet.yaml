@@ -19,13 +19,6 @@ model_config: &model_config
   embed: 'timeF'
   activation: 'gelu'
 
-
-strategy_config: &strategy_config
-  topk: 10
-  bad_thresh: -0.15
-  hold_thresh: 2
-
-
 task:
   model:
     class: QniverseModel
@@ -42,15 +35,23 @@ task:
       freeze_model: False
       model_init_state:
   dataset:
-    class: MTSDatasetH
+    class: UnifiedTSDatasetH
+    module_path: src/dataset.py
     kwargs:
+      handler:
+        class: DataHandler
+        module_path: qlib.data.dataset.handler
+        kwargs:
+          data_loader: *data_loader_config
+      segments:
+        train: [ 2008-01-01, 2023-12-31 ]
+        valid: [ 2008-01-01, 2023-12-31 ]
+        test: [ 2008-01-01, 2023-12-31 ]
       seq_len: 20
       horizon: 1
-      batch_size: 32
-  qlib_dataset:
-    class: BENCH_Step
-    kwargs:
-      market: csi1300_ext
-      benchmark: SH000300 
-      feat: Alpha360
-      label: r1
+      batch_size: 512
+
+strategy_config: &strategy_config
+  topk: 30
+  hold_thre: 5
+  commission_rate: 0.001

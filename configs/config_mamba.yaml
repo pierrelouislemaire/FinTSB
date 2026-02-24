@@ -32,7 +32,7 @@ task:
     module_path: src/model_backbone.py
     kwargs:
       lr: 0.0001
-      n_epochs: 3
+      n_epochs: 50
       max_steps_per_epoch: 5000
       early_stop: 3
       seed: 2025
@@ -51,9 +51,9 @@ task:
         kwargs:
           data_loader: *data_loader_config
       segments:
-        train: [ 2000-01-03, 2000-09-01 ]
-        valid: [ 2000-09-04, 2000-10-06 ]
-        test: [ 2000-10-09, 2000-12-15 ]
+        train: [ 2008-01-01, 2023-12-31 ]
+        valid: [ 2008-01-01, 2023-12-31 ]
+        test: [ 2008-01-01, 2023-12-31 ]
       seq_len: 20
       horizon: 1
       batch_size: 512
