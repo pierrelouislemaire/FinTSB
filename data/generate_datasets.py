@@ -34,7 +34,7 @@ CATEGORIES = {
     "extreme": "black_swan"
 }
 
-MAD_THRESHOLD = 8.0
+MAD_THRESHOLD = 6.0
 
 def initialize_qlib():
     if not os.path.exists(QLIB_DATA_DIR):
@@ -53,8 +53,8 @@ def get_market_data(start_date="2013-01-01", end_date="2023-01-01"):
     
     # We load 'feature' fields expected by FinTSB models (Open, Close, High, Low, Volume)
     # Ref($close, -1) is used to calculate returns
-    fields = ["$open", "$high", "$low", "$close", "$volume", "Ref($close, 1)/$close - 1"]
-    names = ["open", "high", "low", "close", "volume", "label"]
+    fields = ["$open", "$high", "$low", "$close", "$volume"]
+    names = ["open", "high", "low", "close", "volume"]
     
     # Load all A-shares (market='all') to filter later
     df = D.features(D.instruments(market='all'), fields, start_time=start_date, end_time=end_date)
@@ -66,6 +66,7 @@ def get_market_data(start_date="2013-01-01", end_date="2023-01-01"):
     # Create the 'return' column for sorting regimes
     # (Close - PrevClose) / PrevClose
     df['return'] = df['close'].pct_change().fillna(0)
+    df['label'] = df['return'].shift(-1).fillna(0) 
     
     return df
 
@@ -120,8 +121,10 @@ def segment_and_save(df):
         # Slice DataFrame
         segment_df = df.loc[(slice(None), segment_dates), :]
         
-        # Normalize across stocks within this segment to identify regimes
-        segment_df = segment_df.groupby('datetime').transform(lambda x: (x - x.mean()) / x.std()).fillna(0)  # Z-score normalization by date
+        # apply normalization through stock dimension
+        # segment_df_norm = segment_df.groupby(level='datetime').transform(lambda x: (x - x.mean()) / (x.std() + 1e-8))
+        # segment_df_norm["raw_label"] = segment_df["label"]  # Keep original returns for regime classification
+        # segment_df = segment_df_norm
                 
         # We group by instrument to normalize each stock individually
         # (Or you can normalize across the whole market if you prefer)
@@ -174,6 +177,9 @@ def save_dataset(full_df, tickers, category, segment_id):
         
     # Extract data for these tickers
     subset_df = full_df.loc[(tickers, slice(None)), :]
+    subset_df_norm = subset_df.groupby(level='datetime').transform(lambda x: (x - x.mean()) / (x.std() + 1e-8))
+    subset_df_norm["raw_label"] = subset_df["label"]  # Keep original returns for regime classification
+    subset_df = subset_df_norm
     
     # FinTSB expects a dictionary or dataframe object in the pickle.
     # Usually, it's a dict containing 'x' (features) and 'y' (labels), 
@@ -183,7 +189,7 @@ def save_dataset(full_df, tickers, category, segment_id):
     file_path = os.path.join(TEMP_DIR, category, f"dataset_{segment_id}.pkl")
     
     with open(file_path, "wb") as f:
-        pickle.dump(subset_df, f)
+        pickle.dump(subset_df[["open", "high", "low", "close", "volume", "label", "raw_label"]], f)
         
 def calculate_spectral_forecastability(series: pd.Series) -> float:
     """
@@ -334,20 +340,17 @@ def score_candidates(regime_name):
     # We sort based on what defines the regime.
     
     if regime_name in ["rise", "fall"]:
-        # For Trends: We want Strong Trend (High R-val)
-        # We can combine them: Score = Trend + Autocorr
+        # Trends: Strong Trend (High R-value) -> Descending
         candidates.sort(key=lambda x: x["trend_score"], reverse=True)
         
-    elif regime_name == "extreme": # Black Swan
-        # For Extreme: We want high volatility or shock. 
-        # (The previous script already filtered by >9.5% return).
-        # We prioritize high non-stationarity (lowest statistics) 
+    elif regime_name == "extreme": 
+        # Extreme: Low Forecastability (High Surprise) -> Ascending
         candidates.sort(key=lambda x: x["forecastability"], reverse=False)
         
-    elif regime_name == "fluctuation": # Oscillatory
-        # For Fluctuation: We want LOW Trend (Low R-val) and HIGH Stationarity (Low P-val)
-        # So we sort by Trend (Ascending)
-        candidates.sort(key=lambda x: x["stationarity"], reverse=True)
+    elif regime_name == "fluctuation": 
+        # Fluctuation: Strong Stationarity (More Negative ADF Stat) -> Ascending
+        # FIXED: Changed reverse=True to reverse=False
+        candidates.sort(key=lambda x: x["stationarity"], reverse=False)
 
     # Select Top 5
     top_5 = candidates[:5]
@@ -383,7 +386,7 @@ if __name__ == "__main__":
     initialize_qlib()
     
     # Fetch 15 years of data (modify dates if you have less data)
-    data = get_market_data(start_date="2010-01-01", end_date="2023-01-01")
+    data = get_market_data(start_date="2008-01-01", end_date="2023-01-01")
     
     segment_and_save(data)
     save_top_5()
