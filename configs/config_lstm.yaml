@@ -15,7 +15,7 @@ model_config: &model_config
   pred_len: 1
   e_layers: 2
   factor: 3
-  enc_in: 6
+  enc_in: 5
   c_out: 1
   d_model: 64  # 32 for LSTM   64 for Adv-LSTM
   d_ff: 16
