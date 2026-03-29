@@ -293,17 +293,17 @@ class QniverseModel(Model):
 
         if self.logdir:
             self.logger.info("save model & pred to local directory")
-
             torch.save(best_params, self.logdir + "/model.bin")
-
+        
             fig_list = model_performance_graph(preds, show_notebook=False)
             fig_name = [f"{self.model_type}_cumulative_return", f"{self.model_type}_distribution_return", f"{self.model_type}_IC",
                         f"{self.model_type}_monthly_IC", f"{self.model_type}_distribution_IC", f"{self.model_type}_auto_corr"]
+            
             for i, fig in enumerate(fig_list):
-                fig: plotly.graph_objs.Figure = fig
-                fig.write_image(self.logdir + f'/{fig_name[i]}.jpg')
-            print("Vis Finished!")
-
+                # CHANGE: write_html instead of write_image
+                fig.write_html(self.logdir + f'/{fig_name[i]}.html') 
+            
+            print("Vis Finished! (Saved as HTML)")
             preds.to_pickle(self.logdir + "/pred.pkl")
 
             info = {

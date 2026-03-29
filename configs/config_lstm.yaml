@@ -15,7 +15,7 @@ model_config: &model_config
   pred_len: 1
   e_layers: 2
   factor: 3
-  enc_in: 6
+  enc_in: 5
   c_out: 1
   d_model: 64  # 32 for LSTM   64 for Adv-LSTM
   d_ff: 16
@@ -31,9 +31,9 @@ task:
     module_path: src/model_backbone.py
     kwargs:
       lr: 0.0001
-      n_epochs: 3
+      n_epochs: 100
       max_steps_per_epoch: 5500
-      early_stop: 3
+      early_stop: 15
       seed: 2025
       logdir: output/adv_lstm
       model_type: LSTM
